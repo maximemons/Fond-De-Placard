@@ -1,0 +1,100 @@
+rules_version = '2';
+
+// Fond de placard : règles d'accès.
+// - Chaque utilisateur ne lit et n'écrit que son propre document users/{uid}.
+// - Un foyer (et tout ce qu'il contient) n'est accessible qu'à ses membres.
+// - Une personne invitée (adresse e-mail CONFIRMÉE) peut lire le foyer qui l'invite
+//   et s'y ajouter elle-même, rien d'autre.
+// - Seul le créateur du foyer peut retirer un autre membre ; chacun peut partir.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function emailVerified() { return request.auth.token.email_verified == true; }
+
+    match /users/{userId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /households/{hid} {
+      function isMember() { return signedIn() && request.auth.uid in resource.data.memberUids; }
+      function isInvited() {
+        return signedIn() && emailVerified()
+          && request.auth.token.email != null
+          && myEmail() in resource.data.invitedEmails;
+      }
+      function isOwner() { return request.auth.uid == resource.data.ownerUid; }
+      function before() { return resource.data.memberUids.toSet(); }
+      function after() { return request.resource.data.memberUids.toSet(); }
+      function sameOwner() { return request.resource.data.ownerUid == resource.data.ownerUid; }
+
+      function validShape() {
+        let d = request.resource.data;
+        return d.name is string && d.name.size() > 0 && d.name.size() <= 60
+          && d.memberUids is list && d.memberUids.size() >= 1 && d.memberUids.size() <= 20
+          && d.ownerUid in d.memberUids
+          && d.invitedEmails is list && d.invitedEmails.size() <= 20
+          && d.categories is list && d.categories.size() <= 50
+          && (!('listmeLink' in d) || (d.listmeLink is string && d.listmeLink.size() <= 300));
+      }
+
+      allow get, list: if isMember() || isInvited();
+
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.memberUids == [request.auth.uid]
+        && validShape();
+
+      allow update: if validShape() && (
+        // Le créateur : tout (y compris retirer un membre ou transmettre le rôle en partant).
+        (isMember() && isOwner())
+        // Un membre : tout sauf la liste des membres et le créateur…
+        || (isMember() && sameOwner() && after() == before())
+        // …ou se retirer lui-même.
+        || (isMember() && sameOwner()
+            && before().difference(after()) == [request.auth.uid].toSet()
+            && after().difference(before()).size() == 0)
+        // Une personne invitée : s'ajouter elle-même et retirer son invitation, rien d'autre.
+        || (isInvited() && !isMember() && sameOwner()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['memberUids', 'members', 'invitedEmails', 'updatedAt'])
+            && after().difference(before()) == [request.auth.uid].toSet()
+            && before().difference(after()).size() == 0
+            && !(myEmail() in request.resource.data.invitedEmails))
+      );
+
+      allow delete: if isMember() && isOwner();
+
+      // Produits et photos du foyer : membres uniquement.
+      function isMemberOf() {
+        return signedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/households/$(hid)).data.memberUids;
+      }
+
+      match /products/{productId} {
+        allow read, delete: if isMemberOf();
+        allow create, update: if isMemberOf()
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 120
+          && request.resource.data.qty is number
+          && request.resource.data.barcodes is list && request.resource.data.barcodes.size() <= 30;
+      }
+
+      match /images/{imageId} {
+        allow read, delete: if isMemberOf();
+        allow create, update: if isMemberOf()
+          && request.resource.data.keys().hasOnly(['data'])
+          && request.resource.data.data is string
+          && request.resource.data.data.size() < 700000
+          && request.resource.data.data.matches('^data:image/(jpeg|png|webp);base64,.*');
+      }
+    }
+
+    // Tout le reste est fermé.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
