@@ -4,7 +4,7 @@ L’inventaire des placards, du frigo, du congélateur (et de tout ce qu’on ve
 
 ## Placards
 
-- Les produits sont rangés par **rangement** (Placard, Frigo, Congélateur, Fruits et légumes, Cave, Salle de bain, Entretien…), dans l’ordre choisi dans l’onglet Foyer, puis par ordre alphabétique.
+- Les produits sont rangés par **rangement** (Placard, Frigo, Congélateur, Fruits et légumes, Cave, Salle de bain, Entretien…), dans l’ordre choisi dans l’onglet Rangements, puis par ordre alphabétique.
 - Une barre de recherche filtre en direct par nom, marque, nom de liste ou code-barres (sans tenir compte des accents ni des majuscules).
 - Les pastilles du haut filtrent un rangement, ou **À racheter** : les produits dont l’alerte de stock est déclenchée.
 - Chaque ligne a un compteur **− / +** pour corriger le stock d’un geste. Un appui sur le produit ouvre sa fiche.
@@ -68,19 +68,31 @@ L’onglet **Inventaire** recale les quantités quand l’appli et la réalité 
 1. Choisir les rangements à compter (tous par défaut).
 2. Les produits défilent un par un, rangement par rangement : la quantité de l’appli est rappelée, on règle la quantité réelle puis **Valider et continuer**. **Il n’y en a plus** met à 0, **Passer** laisse le produit non compté. La loupe et le code-barres de l’en-tête permettent de sauter à un produit (par recherche ou en le scannant).
 3. **Revoir et terminer** affiche les écarts (`3 → 5`, `+2`) et les produits non comptés, avec l’option **Les mettre à 0**.
-4. **Enregistrer l’inventaire** : les quantités comptées **écrasent** celles de l’appli, pour tout le foyer. La date et l’auteur du dernier inventaire s’affichent dans l’onglet Foyer.
+4. **Enregistrer l’inventaire** : les quantités comptées **écrasent** celles de l’appli, pour tout le foyer. La date et l’auteur du dernier inventaire s’affichent dans Mon compte.
 
 Le comptage en cours est gardé sur le téléphone : on peut fermer l’appli et reprendre plus tard, ou l’abandonner sans rien changer.
 
-## Foyer
+## Rangements
 
-- **Nom du foyer** : le crayon permet de le renommer.
-- **Membres** : chacun voit et modifie le même placard, en direct.
-- **Inviter quelqu’un du foyer** : saisir son adresse e-mail. À sa prochaine connexion avec cette adresse (Google, ou e-mail confirmé), l’invitation lui est proposée ; elle apparaît aussi dans son onglet Foyer.
-  - En rejoignant un foyer, on peut **copier ses produits** dans le placard commun (les rangements de même nom sont fusionnés).
-  - Le créateur du foyer peut **retirer** un membre ; chacun peut **quitter** le foyer (il repart avec un placard vide).
-- **Rangements** : ajouter, renommer, changer l’icône (ou un émoji libre), réordonner avec les flèches, supprimer (les produits sont déplacés vers le rangement choisi).
-- **Mon compte** : renvoyer l’e-mail de confirmation, se déconnecter.
+L’onglet **Rangements** donne une vue d’ensemble : nombre de produits et de produits à racheter par rangement. Un appui ouvre les placards filtrés sur ce rangement.
+
+- **Ajouter un rangement** (en bas de la liste) : nom et icône (ou un émoji libre).
+- Le **crayon** renomme, change l’icône ou supprime (les produits sont déplacés vers le rangement choisi).
+- Les **flèches** changent l’ordre d’affichage dans les placards et dans le grand inventaire.
+
+## Mon compte et mon foyer
+
+Le bouton rond en haut à droite affiche la **photo Google** de la personne connectée, ou ses **initiales** sur une pastille de couleur pour un compte e-mail. Un point jaune signale une invitation reçue. Il ouvre **Mon compte** :
+
+- nom, adresse e-mail et mode de connexion (Google ou e-mail) ; **Modifier mon prénom** pour un compte e-mail ;
+- **Se déconnecter** (le placard reste enregistré et revient à la reconnexion) ;
+- rappel de confirmation de l’adresse e-mail si besoin (renvoyer l’e-mail, « C’est fait ») ;
+- **Invitations reçues**, avec le bouton **Rejoindre** ;
+- **Mon foyer** : nom (le crayon le renomme), nombre de produits, date du dernier grand inventaire ;
+- **Membres** : chacun voit et modifie le même placard, en direct. **Inviter quelqu’un du foyer** par son adresse e-mail : à sa prochaine connexion avec cette adresse (Google, ou e-mail confirmé), l’invitation lui est proposée. En rejoignant, on peut **copier ses produits** dans le placard commun (les rangements de même nom sont fusionnés). Le créateur peut **retirer** un membre ;
+- raccourci vers les **Rangements** ;
+- **Liste ListMe du foyer** : relier, changer ou délier la liste ;
+- **Quitter le foyer** (quand il y a d’autres membres : on repart avec un placard vide).
 
 ## Compte
 

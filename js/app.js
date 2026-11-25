@@ -27,8 +27,13 @@ import { renderInventory } from "./inventory.js";
    En-tête, bouton flottant, écrans
    ========================================================= */
 
-function setHeader({ title, kicker = "", actions = [] }) {
+let prevHash = "#/";
+function setHeader({ title, kicker = "", actions = [], back = false }) {
   $("#topbar-title").textContent = title;
+  $("#btn-back").classList.toggle("hidden", !back);
+  $("#btn-home").classList.toggle("hidden", back);
+  $("#btn-back").onclick = back ? () => { location.hash = prevHash.startsWith("#/compte") ? "#/" : prevHash; } : null;
+  $("#btn-account").classList.toggle("is-active", routeName() === "compte");
   $("#topbar-kicker").textContent = kicker;
   $("#topbar-kicker").classList.toggle("hidden", !kicker);
   document.title = title === "Fond de placard" ? title : `${title} · Fond de placard`;
@@ -73,7 +78,8 @@ let current = { route: null, update: null };
 
 function routeName() {
   const r = location.hash.replace(/^#\/?/, "").split("/")[0];
-  return ["courses", "inventaire", "foyer", "scan"].includes(r) ? r : "home";
+  if (r === "foyer") return "compte";
+  return ["courses", "inventaire", "rangements", "compte", "scan"].includes(r) ? r : "home";
 }
 
 function setActiveTab(route) {
@@ -95,7 +101,7 @@ function render() {
   }
   setActiveTab(route);
   const changed = current.route !== route;
-  const views = { home: renderHome, courses: renderCourses, inventaire: () => renderInventory(ctx), foyer: renderFoyer };
+  const views = { home: renderHome, courses: renderCourses, inventaire: () => renderInventory(ctx), rangements: renderRangements, compte: renderAccount };
   const update = views[route]();
   current = { route, update: typeof update === "function" ? update : null };
   if (changed) {
@@ -112,7 +118,13 @@ function onData() {
   else render();
 }
 
-window.addEventListener("hashchange", () => render());
+let lastHash = location.hash || "#/";
+window.addEventListener("hashchange", () => {
+  if (!location.hash.startsWith("#/compte") && !location.hash.startsWith("#/foyer")) prevHash = location.hash || "#/";
+  else if (!lastHash.startsWith("#/compte")) prevHash = lastHash;
+  lastHash = location.hash;
+  render();
+});
 
 function updateBadge() {
   const n = lowProducts().filter(p => !p.sentAt).length;
@@ -929,47 +941,133 @@ function bindListme(root) {
 
 let receivedInvites = null;
 
-function renderFoyer() {
-  setHeader({ title: "Foyer", kicker: kicker() });
+function loadInvites() {
+  if (receivedInvites !== null) return;
+  receivedInvites = [];
+  findInvites().then(list => {
+    receivedInvites = list;
+    updateAvatar();
+    if (current.route === "compte") current.update?.();
+  });
+}
+
+/* ---------- Avatar de l'en-tête (photo Google, ou initiale) ---------- */
+
+function initialsOf(name, email) {
+  const src = (name || "").trim() || (email || "").split("@")[0];
+  const parts = src.split(/[\s._-]+/).filter(Boolean);
+  const s = parts.length > 1 ? parts[0][0] + parts[1][0] : src.slice(0, 2);
+  return (s || "?").toUpperCase();
+}
+
+// Couleur stable par personne, prise dans la palette de l'appli.
+function avatarHue(seed) {
+  let h = 0;
+  for (const c of String(seed || "")) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return ["#1E6B52", "#3C5A99", "#8A4F7D", "#B5562B", "#4B6B2A", "#2F7C86"][h % 6];
+}
+
+function avatarHtml({ name, email, photo, seed, cls = "" }) {
+  const bg = avatarHue(seed || email);
+  return `<span class="avatar ${cls}" style="--av:${bg}" aria-hidden="true">
+    <span class="avatar-initials">${esc(initialsOf(name, email))}</span>
+    ${photo ? `<img src="${esc(photo)}" alt="" referrerpolicy="no-referrer">` : ""}
+  </span>`;
+}
+
+function hydrateAvatars(root) {
+  $$(".avatar img", root).forEach(img => {
+    const ok = () => img.parentElement.classList.add("has-photo");
+    if (img.complete && img.naturalWidth) ok();
+    else {
+      img.addEventListener("load", ok, { once: true });
+      img.addEventListener("error", () => img.remove(), { once: true });
+    }
+  });
+}
+
+function updateAvatar() {
+  const btn = $("#btn-account");
+  const u = state.user;
+  if (!u) { btn.innerHTML = ""; return; }
+  btn.innerHTML = avatarHtml({ name: myName(), email: u.email, photo: u.photoURL, seed: u.uid })
+    + (receivedInvites?.length ? `<b class="avatar-dot" aria-hidden="true"></b>` : "");
+  btn.setAttribute("aria-label", receivedInvites?.length ? "Mon compte et mon foyer (invitation reçue)" : "Mon compte et mon foyer");
+  hydrateAvatars(btn);
+}
+
+/* =========================================================
+   Vue : mon compte et mon foyer (bouton avatar de l'en-tête)
+   ========================================================= */
+
+function providerLabel(u) {
+  const ids = (u.providerData || []).map(p => p.providerId);
+  if (ids.includes("google.com")) return "Connecté avec Google";
+  return "Connecté par e-mail";
+}
+
+function renderAccount() {
+  setHeader({ title: "Mon compte", kicker: kicker(), back: true });
   setFab(null);
   const view = $("#view");
-  if (receivedInvites === null) {
-    receivedInvites = [];
-    findInvites().then(list => { receivedInvites = list; if (current.route === "foyer") current.update?.(); });
-  }
+  loadInvites();
 
   const update = () => {
     const h = state.household;
     const owner = isOwner();
     const members = (h.memberUids || []).map(u => ({ uid: u, ...(h.members?.[u] || {}) }));
-    const counts = {};
-    state.products.forEach(p => { counts[p.categoryId] = (counts[p.categoryId] || 0) + 1; });
-    const cats = categories();
     const user = state.user;
+    const isGoogle = (user.providerData || []).some(p => p.providerId === "google.com");
 
     view.innerHTML = `
-      <div class="household-name">
-        <h2>${esc(h.name)}</h2>
-        <button type="button" class="icon-btn" data-rename aria-label="Renommer le foyer"><i class="fa-solid fa-pen"></i></button>
+      <section class="me">
+        ${avatarHtml({ name: myName(), email: user.email, photo: user.photoURL, seed: user.uid, cls: "avatar--xl" })}
+        <div class="me-text">
+          <h2>${esc(myName())}</h2>
+          <span class="muted">${esc(user.email || "")}</span>
+          <span class="me-provider"><i class="${isGoogle ? "fa-brands fa-google" : "fa-regular fa-envelope"}" aria-hidden="true"></i> ${esc(providerLabel(user))}</span>
+        </div>
+      </section>
+      <div class="me-actions">
+        ${isGoogle ? "" : `<button type="button" class="btn btn-ghost btn-small" data-edit-name><i class="fa-solid fa-pen"></i> Modifier mon prénom</button>`}
+        <button type="button" class="btn btn-ghost btn-small" data-logout><i class="fa-solid fa-right-from-bracket"></i> Se déconnecter</button>
       </div>
-      <p class="lead">${state.products.length} produit${state.products.length > 1 ? "s" : ""} en tout${h.lastInventoryAt ? `. Dernier grand inventaire le ${esc(fmtDate(h.lastInventoryAt))}${h.lastInventoryBy ? ` par ${esc(h.lastInventoryBy)}` : ""}` : ""}.</p>
+      ${user.emailVerified ? "" : `
+      <div class="notice">
+        <p><strong>Adresse e-mail à confirmer.</strong> Clique sur le lien reçu par e-mail : c’est nécessaire pour rejoindre un foyer qui t’invite.</p>
+        <div class="row">
+          <button type="button" class="btn btn-ghost btn-small" data-verify>Renvoyer l’e-mail</button>
+          <button type="button" class="btn btn-ghost btn-small" data-verified>C’est fait</button>
+        </div>
+      </div>`}
 
       ${receivedInvites.length ? `
       <section class="block">
         <h3 class="block-title">Invitations reçues</h3>
         <ul class="rows">${receivedInvites.map(inv => `
           <li><span class="rows-icon">🏠</span>
-            <span class="rows-text"><strong>${esc(inv.name)}</strong><small>${(inv.memberUids || []).length} membre${(inv.memberUids || []).length > 1 ? "s" : ""}</small></span>
+            <span class="rows-text"><strong>${esc(inv.name)}</strong><small>${esc(Object.values(inv.members || {}).map(m => m.name || m.email).join(", "))}</small></span>
             <button type="button" class="btn btn-primary btn-small" data-join="${esc(inv.id)}">Rejoindre</button>
           </li>`).join("")}</ul>
       </section>` : ""}
+
+      <section class="block">
+        <div class="block-head">
+          <h3 class="block-title">Mon foyer</h3>
+        </div>
+        <div class="household-name">
+          <h2>${esc(h.name)}</h2>
+          <button type="button" class="icon-btn" data-rename aria-label="Renommer le foyer"><i class="fa-solid fa-pen"></i></button>
+        </div>
+        <p class="muted" style="margin-top:4px">${state.products.length} produit${state.products.length > 1 ? "s" : ""}, ${categories().length} rangement${categories().length > 1 ? "s" : ""}${h.lastInventoryAt ? `. Dernier grand inventaire le ${esc(fmtDate(h.lastInventoryAt))}${h.lastInventoryBy ? ` par ${esc(h.lastInventoryBy)}` : ""}` : ""}.</p>
+      </section>
 
       <section class="block">
         <h3 class="block-title">Membres</h3>
         <ul class="rows">
           ${members.map(m => `
           <li>
-            <span class="avatar" aria-hidden="true">${esc((m.name || m.email || "?").charAt(0).toUpperCase())}</span>
+            ${avatarHtml({ name: m.name, email: m.email, photo: m.uid === uid() ? user.photoURL : "", seed: m.uid })}
             <span class="rows-text"><strong>${esc(m.name || m.email || "Membre")}${m.uid === uid() ? " (toi)" : ""}</strong><small>${esc(m.email || "")}</small></span>
             ${m.uid === h.ownerUid ? `<span class="pill">Créateur</span>` : ""}
             ${owner && m.uid !== uid() ? `<button type="button" class="icon-btn icon-btn--danger" data-remove="${esc(m.uid)}" aria-label="Retirer ${esc(m.name || m.email)}"><i class="fa-solid fa-user-minus"></i></button>` : ""}
@@ -985,44 +1083,39 @@ function renderFoyer() {
       </section>
 
       <section class="block">
-        <div class="block-head"><h3 class="block-title">Rangements</h3></div>
-        <ul class="rows">
-          ${cats.map((c, i) => `
-          <li>
-            <span class="rows-icon" aria-hidden="true">${esc(c.icon)}</span>
-            <button type="button" class="rows-text" data-cat-edit="${esc(c.id)}" style="border:0;background:none;padding:0;text-align:left">
-              <strong>${esc(c.name)}</strong><small>${counts[c.id] || 0} produit${(counts[c.id] || 0) > 1 ? "s" : ""}</small>
-            </button>
-            <button type="button" class="icon-btn" data-cat-up="${i}" aria-label="Monter ${esc(c.name)}" ${i === 0 ? "disabled" : ""}><i class="fa-solid fa-arrow-up"></i></button>
-            <button type="button" class="icon-btn" data-cat-down="${i}" aria-label="Descendre ${esc(c.name)}" ${i === cats.length - 1 ? "disabled" : ""}><i class="fa-solid fa-arrow-down"></i></button>
-          </li>`).join("")}
-          <li class="add-row"><button type="button" data-cat-add><i class="fa-solid fa-plus"></i> Ajouter un rangement</button></li>
-        </ul>
+        <h3 class="block-title">Rangements</h3>
+        <a class="rows-link" href="#/rangements">
+          <span class="rows-icon" aria-hidden="true">${esc(categories().slice(0, 1).map(c => c.icon).join("") || "📦")}</span>
+          <span class="rows-text"><strong>${esc(categories().map(c => c.name).join(", ") || "Aucun rangement")}</strong><small>Ajouter, renommer, réordonner</small></span>
+          <i class="fa-solid fa-chevron-right muted" aria-hidden="true"></i>
+        </a>
       </section>
 
       ${listmeBlock(h.listmeLink || "")}
 
+      ${members.length > 1 ? `
       <section class="block">
-        <h3 class="block-title">Mon compte</h3>
-        <div class="card">
-          <p><strong>${esc(myName())}</strong><br><span class="muted">${esc(user.email || "")}</span></p>
-          ${user.emailVerified ? "" : `
-            <p class="muted">Adresse e-mail pas encore confirmée : confirme-la pour pouvoir rejoindre un foyer qui t’invite.</p>
-            <div class="row">
-              <button type="button" class="btn btn-ghost btn-small" data-verify>Renvoyer l’e-mail</button>
-              <button type="button" class="btn btn-ghost btn-small" data-verified>C’est fait</button>
-            </div>`}
-          <div class="row">
-            <button type="button" class="btn btn-ghost btn-small" data-logout><i class="fa-solid fa-right-from-bracket"></i> Se déconnecter</button>
-            ${members.length > 1 ? `<button type="button" class="btn btn-danger-ghost btn-small" data-leave>Quitter le foyer</button>` : ""}
-          </div>
-        </div>
-      </section>`;
+        <button type="button" class="btn btn-danger-ghost btn-block" data-leave><i class="fa-solid fa-door-open"></i> Quitter « ${esc(h.name)} »</button>
+      </section>` : ""}`;
+
+    hydrateAvatars(view);
 
     $("[data-rename]", view).onclick = async () => {
       const v = await promptDialog("Nom du foyer", { value: h.name, maxLength: 60, confirmLabel: "Renommer" });
       if (v && v !== h.name) persist(renameHousehold(v), "Foyer renommé");
     };
+    $("[data-edit-name]", view)?.addEventListener("click", async () => {
+      const v = await promptDialog("Ton prénom", { value: myName(), maxLength: 40, confirmLabel: "Enregistrer" });
+      if (!v || v === myName()) return;
+      try {
+        await updateProfile(state.user, { displayName: v });
+        memberInfoChecked = false;
+        updateMyMemberInfo();
+        updateAvatar();
+        update();
+        toast("Prénom modifié");
+      } catch { toast("Modification impossible pour le moment.", { error: true }); }
+    });
     $("[data-invite]", view).onclick = inviteFlow;
     $$("[data-cancel-invite]", view).forEach(b => b.onclick = () => persist(cancelInvite(b.dataset.cancelInvite), "Invitation annulée"));
     $$("[data-remove]", view).forEach(b => b.onclick = async () => {
@@ -1031,18 +1124,6 @@ function renderFoyer() {
       if (ok) persist(removeMember(m.uid), "Membre retiré");
     });
     $$("[data-join]", view).forEach(b => b.onclick = () => joinFlow(receivedInvites.find(i => i.id === b.dataset.join)));
-
-    $$("[data-cat-edit]", view).forEach(b => b.onclick = () => openCategorySheet(cats.find(c => c.id === b.dataset.catEdit)));
-    $("[data-cat-add]", view).onclick = () => openCategorySheet(null);
-    const move = (i, d) => {
-      const list = cats.slice();
-      [list[i], list[i + d]] = [list[i + d], list[i]];
-      state.household.categories = list;
-      persist(saveCategories(list));
-      update();
-    };
-    $$("[data-cat-up]", view).forEach(b => b.onclick = () => move(+b.dataset.catUp, -1));
-    $$("[data-cat-down]", view).forEach(b => b.onclick = () => move(+b.dataset.catDown, 1));
 
     bindListme(view);
 
@@ -1062,10 +1143,7 @@ function renderFoyer() {
         toast("Pas encore confirmée : clique sur le lien reçu par e-mail.", { error: true });
       }
     });
-    $("[data-logout]", view).onclick = async () => {
-      const ok = await confirmDialog("Se déconnecter ?", { confirmLabel: "Se déconnecter" });
-      if (ok) signOut(auth);
-    };
+    $("[data-logout]", view).onclick = logoutFlow;
     $("[data-leave]", view)?.addEventListener("click", async () => {
       const ok = await confirmDialog(`Quitter « ${h.name} » ?`, {
         confirmLabel: "Quitter", danger: true,
@@ -1077,6 +1155,7 @@ function renderFoyer() {
         const hid = await leaveHousehold();
         receivedInvites = null;
         watch(hid);
+        location.hash = "#/";
         toast("Tu as quitté le foyer");
       } catch (err) {
         console.error(err);
@@ -1084,6 +1163,90 @@ function renderFoyer() {
         render();
       }
     });
+  };
+
+  update();
+  return update;
+}
+
+async function logoutFlow() {
+  const ok = await confirmDialog("Se déconnecter ?", {
+    confirmLabel: "Se déconnecter",
+    detail: "Le placard reste enregistré : tu le retrouveras en te reconnectant."
+  });
+  if (!ok) return;
+  location.hash = "#/";
+  signOut(auth);
+}
+
+/* =========================================================
+   Vue : rangements (vue d'ensemble et réglage)
+   ========================================================= */
+
+function renderRangements() {
+  setHeader({ title: "Rangements", kicker: kicker() });
+  setFab(null);
+  const view = $("#view");
+
+  const update = () => {
+    const cats = categories();
+    const stats = {};
+    state.products.forEach(p => {
+      const k = categoryOf(p.categoryId) ? p.categoryId : "";
+      stats[k] = stats[k] || { n: 0, low: 0, empty: 0 };
+      stats[k].n++;
+      if (isLow(p)) stats[k].low++;
+      if (p.qty <= 0) stats[k].empty++;
+    });
+    const line = s => {
+      if (!s?.n) return "Vide";
+      const bits = [`${s.n} produit${s.n > 1 ? "s" : ""}`];
+      if (s.low) bits.push(`${s.low} à racheter`);
+      return bits.join(", ");
+    };
+
+    view.innerHTML = `
+      <p class="lead" style="margin-top:0">Un appui ouvre le rangement. Le crayon le renomme ou change son icône, les flèches changent l’ordre d’affichage dans les placards.</p>
+      <ul class="rows" style="margin-top:16px">
+        ${cats.map((c, i) => `
+        <li>
+          <a class="rows-open" href="#/" data-goto="${esc(c.id)}">
+            <span class="rows-icon" aria-hidden="true">${esc(c.icon)}</span>
+            <span class="rows-text"><strong>${esc(c.name)}</strong><small>${esc(line(stats[c.id]))}</small></span>
+          </a>
+          ${stats[c.id]?.low ? `<span class="tag" style="margin:0">${stats[c.id].low}</span>` : ""}
+          <button type="button" class="icon-btn" data-cat-edit="${esc(c.id)}" aria-label="Modifier ${esc(c.name)}"><i class="fa-solid fa-pen"></i></button>
+          <span class="reorder">
+            <button type="button" class="icon-btn" data-cat-up="${i}" aria-label="Monter ${esc(c.name)}" ${i === 0 ? "disabled" : ""}><i class="fa-solid fa-chevron-up"></i></button>
+            <button type="button" class="icon-btn" data-cat-down="${i}" aria-label="Descendre ${esc(c.name)}" ${i === cats.length - 1 ? "disabled" : ""}><i class="fa-solid fa-chevron-down"></i></button>
+          </span>
+        </li>`).join("")}
+        ${stats[""]?.n ? `
+        <li>
+          <a class="rows-open" href="#/" data-goto="">
+            <span class="rows-icon" aria-hidden="true">📦</span>
+            <span class="rows-text"><strong>Sans rangement</strong><small>${esc(line(stats[""]))}</small></span>
+          </a>
+        </li>` : ""}
+        <li class="add-row"><button type="button" data-cat-add><i class="fa-solid fa-plus"></i> Ajouter un rangement</button></li>
+      </ul>`;
+
+    $$("[data-goto]", view).forEach(a => a.addEventListener("click", () => {
+      homeFilter.cat = a.dataset.goto || "all";
+      homeFilter.q = "";
+      sessionStorage.setItem("fdp:cat", homeFilter.cat);
+    }));
+    $$("[data-cat-edit]", view).forEach(b => b.onclick = () => openCategorySheet(cats.find(c => c.id === b.dataset.catEdit)));
+    $("[data-cat-add]", view).onclick = () => openCategorySheet(null);
+    const move = (i, d) => {
+      const list = cats.slice();
+      [list[i], list[i + d]] = [list[i + d], list[i]];
+      state.household.categories = list;
+      persist(saveCategories(list));
+      update();
+    };
+    $$("[data-cat-up]", view).forEach(b => b.onclick = () => move(+b.dataset.catUp, -1));
+    $$("[data-cat-down]", view).forEach(b => b.onclick = () => move(+b.dataset.catDown, 1));
   };
 
   update();
@@ -1100,7 +1263,7 @@ async function inviteFlow() {
   const appUrl = `${location.origin}${location.pathname}`;
   const c = await choiceDialog(`${email} est invité·e.`, [
     { label: "Copier le lien de l’appli", value: "copy", kind: "primary" }
-  ], { cancelLabel: "Fermer", detail: "Il lui suffit d’ouvrir Fond de placard et de se connecter avec cette adresse (Google, ou e-mail confirmé). L’invitation apparaît alors à la connexion et dans l’onglet Foyer." });
+  ], { cancelLabel: "Fermer", detail: "Il lui suffit d’ouvrir Fond de placard et de se connecter avec cette adresse (Google, ou e-mail confirmé). L’invitation apparaît alors à la connexion, et dans « Mon compte » (sa photo ou ses initiales, en haut à droite)." });
   if (c === "copy") {
     try { await navigator.clipboard.writeText(appUrl); toast("Lien copié"); } catch { toast(appUrl); }
   }
@@ -1127,6 +1290,7 @@ async function joinFlow(inv) {
     const hid = await joinHousehold(inv, { copy });
     receivedInvites = null;
     watch(hid);
+    location.hash = "#/";
     toast(`Bienvenue dans ${inv.name}`);
   } catch (err) {
     console.error(err);
@@ -1315,6 +1479,7 @@ async function boot(user) {
       if (id !== bootId) return;
     }
     watch(hid);
+    loadInvites();
   } catch (err) {
     console.error(err);
     if (id === bootId) showOffline();
@@ -1389,6 +1554,7 @@ onAuthStateChanged(auth, async user => {
   if (user) {
     memberInfoChecked = false;
     receivedInvites = null;
+    updateAvatar();
     boot(user);
   } else {
     bootId++;
@@ -1401,6 +1567,10 @@ onAuthStateChanged(auth, async user => {
 /* ---------- Divers ---------- */
 
 $("#btn-scan").addEventListener("click", () => openMainScanner());
+$("#btn-account").addEventListener("click", () => {
+  if (routeName() === "compte") location.hash = prevHash.startsWith("#/compte") ? "#/" : prevHash;
+  else location.hash = "#/compte";
+});
 
 const updateOnline = () => $("#offline-bar").classList.toggle("hidden", navigator.onLine);
 window.addEventListener("online", updateOnline);

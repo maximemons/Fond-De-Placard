@@ -1,1 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#1E6B52"/><g fill="#fff"><rect x="13" y="30" width="10" height="18" rx="2"/><rect x="27" y="18" width="10" height="30" rx="2"/><rect x="41" y="25" width="10" height="23" rx="2"/><rect x="9" y="49" width="46" height="4" rx="2"/></g><g fill="#E5A50A"><rect x="12" y="26" width="12" height="3" rx="1.5"/><rect x="26" y="14" width="12" height="3" rx="1.5"/><rect x="40" y="21" width="12" height="3" rx="1.5"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <clipPath id="cob"><ellipse cx="32" cy="34.6" rx="4.3" ry="7.4"/></clipPath>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#F4C21B"/>
+  <g transform="translate(32 33) scale(1.16) translate(-32 -33)">
+    <!-- ombre portée -->
+    <ellipse cx="33.5" cy="51.5" rx="15" ry="3.6" fill="#C9960A" opacity=".45"/>
+    <!-- corps et fond arrondi -->
+    <rect x="17" y="16" width="30" height="34" fill="#FAFBF7"/>
+    <ellipse cx="32" cy="50" rx="15" ry="4.5" fill="#FAFBF7"/>
+    <!-- étiquette verte -->
+    <rect x="17" y="24.5" width="30" height="19.5" fill="#1E6B52"/>
+    <rect x="20.5" y="24.5" width="3" height="19.5" fill="#2E8566"/>
+    <!-- épi de maïs -->
+    <ellipse cx="32" cy="34.6" rx="4.3" ry="7.4" fill="#E9A800"/>
+    <g clip-path="url(#cob)" fill="#FFD94A">
+      <circle cx="29.4" cy="28" r=".95"/><circle cx="31.4" cy="28" r=".95"/><circle cx="33.4" cy="28" r=".95"/><circle cx="35.4" cy="28" r=".95"/>
+      <circle cx="28.4" cy="30" r=".95"/><circle cx="30.4" cy="30" r=".95"/><circle cx="32.4" cy="30" r=".95"/><circle cx="34.4" cy="30" r=".95"/><circle cx="36.4" cy="30" r=".95"/>
+      <circle cx="29.4" cy="32" r=".95"/><circle cx="31.4" cy="32" r=".95"/><circle cx="33.4" cy="32" r=".95"/><circle cx="35.4" cy="32" r=".95"/>
+      <circle cx="28.4" cy="34" r=".95"/><circle cx="30.4" cy="34" r=".95"/><circle cx="32.4" cy="34" r=".95"/><circle cx="34.4" cy="34" r=".95"/><circle cx="36.4" cy="34" r=".95"/>
+      <circle cx="29.4" cy="36" r=".95"/><circle cx="31.4" cy="36" r=".95"/><circle cx="33.4" cy="36" r=".95"/><circle cx="35.4" cy="36" r=".95"/>
+      <circle cx="28.4" cy="38" r=".95"/><circle cx="30.4" cy="38" r=".95"/><circle cx="32.4" cy="38" r=".95"/><circle cx="34.4" cy="38" r=".95"/><circle cx="36.4" cy="38" r=".95"/>
+      <circle cx="29.4" cy="40" r=".95"/><circle cx="31.4" cy="40" r=".95"/><circle cx="33.4" cy="40" r=".95"/><circle cx="35.4" cy="40" r=".95"/>
+    </g>
+    <!-- feuilles -->
+    <path d="M32 43.6 C26.6 42.4 25.4 36.6 26.6 31.4 C27.6 36 29.4 40 32 43.6 Z" fill="#8CCB5E"/>
+    <path d="M32 43.6 C37.4 42.4 38.6 36.6 37.4 31.4 C36.4 36 34.6 40 32 43.6 Z" fill="#6DB548"/>
+    <!-- sertissages -->
+    <rect x="17" y="20.6" width="30" height="1.4" fill="#1E6B52" opacity=".18"/>
+    <rect x="17" y="46.4" width="30" height="1.4" fill="#1E6B52" opacity=".18"/>
+    <!-- couvercle et languette -->
+    <ellipse cx="32" cy="16" rx="15" ry="4.5" fill="#FAFBF7"/>
+    <ellipse cx="32" cy="16" rx="12" ry="3.1" fill="#DDE3DA"/>
+    <ellipse cx="35" cy="15.6" rx="3.2" ry="1.5" fill="none" stroke="#A3AFA4" stroke-width="1"/>
+  </g>
+</svg>
