@@ -14,8 +14,11 @@ import {
   categories, categoryOf, findByCode, isLow, lowProducts, createProduct, updateProduct, deleteProduct,
   changeQty, addBarcode, removeBarcode, markSent, clearSent, loadPhoto, saveCategories, deleteCategory,
   renameHousehold, setListmeLink, inviteEmail, cancelInvite, removeMember, joinHousehold, leaveHousehold,
-  myEmail, myName, uid, isOwner, updateMyMemberInfo
+  myEmail, myName, uid, isOwner, updateMyMemberInfo,
+  needsRestock, isBoughtAwaiting, expiringProducts, recordPurchase, addLots
 } from "./store.js";
+import { lotsOf, lotsTotal, nextLot, daysUntil, dlcShort, dlcText, fmtDlc, DLC_WARN_DAYS } from "./dlc.js";
+import { initNotifications, refreshNotifications } from "./notifications.js";
 import { UNITS, unitOf, stepOf, qtyLabel, FRESH, CATEGORY_ICONS } from "./catalog.js";
 import { openScanner } from "./scanner.js";
 import { lookupBarcode, isValidCode } from "./lookup.js";
@@ -113,6 +116,7 @@ function render() {
 // Mise à jour en direct : on ne reconstruit que ce qui bouge (la recherche garde le focus).
 function onData() {
   updateBadge();
+  refreshNotifications();
   if (!state.ready.household || !state.ready.products) return;
   if (current.route && current.update) current.update();
   else render();
@@ -160,14 +164,17 @@ function renderHome() {
     const cats = categories();
     const counts = {};
     prods.forEach(p => { counts[p.categoryId] = (counts[p.categoryId] || 0) + 1; });
-    const lowCount = prods.filter(isLow).length;
-    if (homeFilter.cat !== "all" && homeFilter.cat !== "low" && !cats.some(c => c.id === homeFilter.cat)) homeFilter.cat = "all";
+    const lowCount = prods.filter(needsRestock).length;
+    const expiring = new Set(expiringProducts().map(p => p.id));
+    const special = ["all", "low", "dlc"];
+    if (!special.includes(homeFilter.cat) && !cats.some(c => c.id === homeFilter.cat)) homeFilter.cat = "all";
 
     const chip = (id, label, n, extra = "") =>
       `<button type="button" class="${extra}" data-cat="${esc(id)}" aria-pressed="${homeFilter.cat === id}">${label} <b>${n}</b></button>`;
     $("#home-chips").innerHTML =
       chip("all", "Tout", prods.length) +
-      (lowCount ? chip("low", `<i class="fa-solid fa-tag" aria-hidden="true"></i> À racheter`, lowCount, "chip-low") : "") +
+      (lowCount || homeFilter.cat === "low" ? chip("low", `<i class="fa-solid fa-tag" aria-hidden="true"></i> À racheter`, lowCount, "chip-low") : "") +
+      (expiring.size || homeFilter.cat === "dlc" ? chip("dlc", `<i class="fa-regular fa-calendar-xmark" aria-hidden="true"></i> Bientôt périmés`, expiring.size, "chip-dlc") : "") +
       cats.map(c => chip(c.id, `${esc(c.icon)} ${esc(c.name)}`, counts[c.id] || 0)).join("");
     $$("#home-chips [data-cat]").forEach(b => b.addEventListener("click", () => {
       homeFilter.cat = b.dataset.cat;
@@ -191,8 +198,9 @@ function renderHome() {
 
     const q = norm(homeFilter.q);
     let shown = prods.filter(p => {
-      if (homeFilter.cat === "low" && !isLow(p)) return false;
-      if (homeFilter.cat !== "all" && homeFilter.cat !== "low" && p.categoryId !== homeFilter.cat) return false;
+      if (homeFilter.cat === "low" && !needsRestock(p)) return false;
+      if (homeFilter.cat === "dlc" && !expiring.has(p.id)) return false;
+      if (!special.includes(homeFilter.cat) && p.categoryId !== homeFilter.cat) return false;
       if (!q) return true;
       return norm(`${p.name} ${p.brand} ${p.listName} ${p.barcodes.join(" ")}`).includes(q);
     });
@@ -227,17 +235,26 @@ function renderHome() {
 }
 
 function itemRow(p) {
-  const low = isLow(p);
+  const low = needsRestock(p);
+  const bought = isLow(p) && isBoughtAwaiting(p);
   const step = stepOf(p);
   const unit = unitOf(p.unit).short;
+  const lot = p.qty > 0 ? nextLot(p) : null;
+  const lotSoon = lot && daysUntil(lot.date) <= DLC_WARN_DAYS;
+  const sub = [subLine(p), lot && !lotSoon ? `DLC ${fmtDlc(lot.date)}` : ""].filter(Boolean).join(" · ");
+  const tags = [
+    lotSoon ? `<span class="tag tag--dlc ${daysUntil(lot.date) < 0 ? "is-over" : ""}" title="${esc(dlcText(lot.date))}"><i class="fa-regular fa-calendar-xmark" aria-hidden="true"></i> ${esc(dlcShort(lot.date))}</span>` : "",
+    low ? `<span class="tag">${p.sentAt ? "Sur la liste" : "À racheter"}</span>` : "",
+    bought ? `<span class="tag tag--sent">Acheté</span>` : ""
+  ].filter(Boolean).join("");
   return `
     <li class="item ${low ? "is-low" : ""} ${p.qty <= 0 ? "is-empty" : ""}" data-id="${esc(p.id)}">
       <button type="button" class="item-open" data-open>
         ${thumbHtml(p)}
         <span class="item-text">
           <strong>${esc(p.name)}</strong>
-          ${subLine(p) ? `<small>${esc(subLine(p))}</small>` : ""}
-          ${low ? `<span class="tag">${p.sentAt ? "Sur la liste" : "À racheter"}</span>` : ""}
+          ${sub ? `<small>${esc(sub)}</small>` : ""}
+          ${tags ? `<span class="tags">${tags}</span>` : ""}
         </span>
       </button>
       <div class="stepper" role="group" aria-label="Stock de ${esc(p.name)}">
@@ -254,12 +271,12 @@ function bindItemRows(root, update) {
     if (!p) return;
     $("[data-open]", li).onclick = () => openProductSheet({ product: p });
     $$("[data-delta]", li).forEach(b => b.onclick = () => {
-      const wasLow = isLow(p);
+      const wasLow = needsRestock(p);
       const { applied, done } = changeQty(p, toNum(b.dataset.delta));
       if (!applied) return;
       vibrate(15);
       persist(done);
-      if (!wasLow && isLow(p)) toast(`${p.name} est à racheter`);
+      if (!wasLow && needsRestock(p)) toast(`${p.name} est à racheter`);
       update();
     });
   });
@@ -361,6 +378,72 @@ function bindStepper(root, onChange) {
   return { read, set: v => { input.value = fmtQty(v); }, setStep: s => { root.dataset.step = s; } };
 }
 
+/* ---------- Éditeur de dates limites (DLC) : une ligne par date, avec sa quantité ---------- */
+
+function lotsEditorHtml(addLabel = "Ajouter une date") {
+  return `<div class="lots" data-lots></div>
+    <button type="button" class="btn btn-ghost btn-small lots-add" data-add-lot><i class="fa-regular fa-calendar-plus"></i> ${esc(addLabel)}</button>`;
+}
+
+function bindLotsEditor(root, { lots = [], step = 1, defaultQty = null, onChange = null } = {}) {
+  const items = lots.map(l => ({ id: l.id || newId(), date: l.date || "", qty: Number(l.qty) || 0 }));
+  const box = $("[data-lots]", root);
+  let curStep = step;
+
+  const hint = date => (date ? dlcText(date) : "Choisis la date");
+  const draw = () => {
+    box.innerHTML = items.map(l => {
+      const warn = l.date && daysUntil(l.date) <= DLC_WARN_DAYS;
+      return `<div class="lot-row ${warn ? "is-warn" : ""}" data-lot="${esc(l.id)}">
+        <label class="lot-date"><span class="sr-only">Date limite</span>
+          <input type="date" value="${esc(l.date)}" data-lot-date></label>
+        ${stepperHtml(`lot-${l.id}`, l.qty, curStep, { label: "Quantité avec cette date", min: 0 })}
+        <button type="button" class="icon-btn" data-lot-rm aria-label="Retirer cette date"><i class="fa-solid fa-xmark"></i></button>
+        <small class="lot-hint" data-lot-hint>${esc(hint(l.date))}</small>
+      </div>`;
+    }).join("");
+    $$("[data-lot]", box).forEach(row => {
+      const l = items.find(x => x.id === row.dataset.lot);
+      const dateIn = $("[data-lot-date]", row);
+      dateIn.addEventListener("change", () => {
+        l.date = dateIn.value;
+        $("[data-lot-hint]", row).textContent = hint(l.date);
+        row.classList.toggle("is-warn", !!l.date && daysUntil(l.date) <= DLC_WARN_DAYS);
+        onChange?.();
+      });
+      bindStepper($("[data-stepper]", row), v => { l.qty = v; onChange?.(); });
+      $("[data-lot-rm]", row).onclick = () => {
+        items.splice(items.indexOf(l), 1);
+        draw();
+        onChange?.();
+      };
+    });
+  };
+
+  const api = {
+    add(qty) {
+      const q = qty ?? (defaultQty ? defaultQty() : curStep);
+      const l = { id: newId(), date: "", qty: Math.max(0, Math.round(q * 1000) / 1000) || curStep };
+      items.push(l);
+      draw();
+      const input = $(`[data-lot="${CSS.escape(l.id)}"] [data-lot-date]`, box);
+      input?.focus();
+      try { input?.showPicker?.(); } catch { /* pas de sélecteur automatique */ }
+      onChange?.();
+    },
+    /** Lots complets (date + quantité), triés. */
+    read: () => items.filter(l => l.date && daysUntil(l.date) !== Infinity && l.qty > 0)
+      .map(l => ({ id: l.id, date: l.date, qty: l.qty }))
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    /** Lignes avec une quantité mais sans date. */
+    undated: () => items.filter(l => !l.date && l.qty > 0).length,
+    setStep(sv) { curStep = sv; $$("[data-stepper]", box).forEach(st => { st.dataset.step = sv; }); }
+  };
+  $("[data-add-lot]", root).onclick = () => api.add();
+  draw();
+  return api;
+}
+
 /**
  * Ouvre la fiche d'un produit.
  * product : produit existant (modification), ou prefill : valeurs de départ (création).
@@ -426,6 +509,12 @@ function openProductSheet({ product = null, prefill = {}, onSaved = null } = {})
         <small data-qty-unit>${esc(unitOf(base.unit).label)}</small>
       </div>
 
+      <fieldset class="field" style="margin-top:14px" data-lots-field>
+        <legend class="field-label">Dates limites (DLC)</legend>
+        ${lotsEditorHtml()}
+        <span class="field-help">Indique combien en ont chaque date : la cloche prévient ${DLC_WARN_DAYS} jours avant. Quand le stock baisse, les dates les plus proches partent en premier.</span>
+      </fieldset>
+
       <div class="switch-row" style="margin-top:14px">
         <span><strong>Alerte de stock</strong><small>L’ajouter aux courses quand il en reste peu</small></span>
         <label class="switch"><input type="checkbox" name="alert" ${base.alert ? "checked" : ""} aria-label="Alerte de stock"><span></span></label>
@@ -475,10 +564,19 @@ function openProductSheet({ product = null, prefill = {}, onSaved = null } = {})
       const qtyS = bindStepper($('[data-stepper="qty"]', el), () => { qtyTouched = true; dirty = true; });
       const thrS = bindStepper($('[data-stepper="threshold"]', el), () => { dirty = true; });
       const resS = bindStepper($('[data-stepper="restockQty"]', el), () => { dirty = true; });
+      const lotsEd = bindLotsEditor($("[data-lots-field]", el), {
+        lots: lotsOf(base),
+        step: stepOf(base),
+        defaultQty: () => {
+          const left = (qtyTouched ? qtyS.read() : base.qty) - lotsTotal(lotsEd.read());
+          return left > 0 ? left : stepOf({ unit: form.unit.value });
+        },
+        onChange: () => { dirty = true; }
+      });
 
       form.unit.addEventListener("change", () => {
         const u = unitOf(form.unit.value);
-        [qtyS, thrS, resS].forEach(s => s.setStep(u.step));
+        [qtyS, thrS, resS, lotsEd].forEach(s => s.setStep(u.step));
         $("[data-qty-unit]", el).textContent = u.label;
       });
       form.alert.addEventListener("change", () => $("[data-alert-panel]", el).classList.toggle("hidden", !form.alert.checked));
@@ -573,6 +671,13 @@ function openProductSheet({ product = null, prefill = {}, onSaved = null } = {})
       function save() {
         const name = form.name.value.trim();
         if (!name) { form.name.focus(); toast("Donne un nom au produit.", { error: true }); return; }
+        const lots = lotsEd.read();
+        const stock = qtyTouched ? qtyS.read() : base.qty;
+        if (lotsEd.undated()) { toast("Une date limite n’a pas de date : choisis-la ou retire la ligne.", { error: true }); return; }
+        if (lotsTotal(lots) > stock) {
+          toast(`${fmtQty(lotsTotal(lots))} produits datés pour ${fmtQty(stock)} en stock : corrige le stock ou les dates.`, { error: true });
+          return;
+        }
         const data = {
           name,
           brand: form.brand.value.trim(),
@@ -585,6 +690,7 @@ function openProductSheet({ product = null, prefill = {}, onSaved = null } = {})
           threshold: thrS.read(),
           restockQty: resS.read() || stepOf({ unit: form.unit.value }),
           listName: form.listName.value.trim(),
+          lots,
           imageUrl
         };
         if (isNew) data.source = base.source || "";
@@ -641,7 +747,7 @@ function openMainScanner() {
 }
 
 function flash(ctrl, p, applied, { out = false } = {}) {
-  const low = isLow(p);
+  const low = needsRestock(p);
   const label = applied
     ? `${p.name} : ${applied > 0 ? "+" : "−"}${fmtQty(Math.abs(applied))}, il en reste ${stockText(p)}`
     : `${p.name} : déjà à 0`;
@@ -649,8 +755,20 @@ function flash(ctrl, p, applied, { out = false } = {}) {
     <div class="scan-flash ${out ? "is-out" : ""}">
       ${thumbHtml(p)}
       <span>${esc(label)}${low && applied ? `<br><span class="tag">À racheter</span>` : ""}</span>
+      ${applied > 0 ? `<button type="button" class="btn btn-ghost btn-small" data-dlc aria-label="Ajouter une date limite"><i class="fa-regular fa-calendar-plus"></i> DLC</button>` : ""}
       ${applied ? `<button type="button" class="btn btn-ghost btn-small" data-undo>Annuler</button>` : ""}
     </div>`);
+  $("[data-dlc]", ctrl.panel)?.addEventListener("click", async () => {
+    ctrl.hold = true;
+    ctrl.pause();
+    const v = await promptDialog(`Date limite de ${p.name} (${qtyLabel(applied, p.unit)})`, { type: "date", confirmLabel: "Enregistrer" });
+    if (v && daysUntil(v) !== Infinity) {
+      persist(addLots(p, [{ date: v, qty: applied }]));
+      ctrl.setPanel(`<div class="scan-flash"><span>${esc(p.name)} : DLC du ${esc(fmtDlc(v))} enregistrée</span></div>`);
+    }
+    ctrl.hold = false;
+    ctrl.resume();
+  });
   hydrateThumbs(ctrl.panel);
   $("[data-undo]", ctrl.panel)?.addEventListener("click", () => {
     const { done } = changeQty(p, -applied);
@@ -668,7 +786,7 @@ async function handleScannedCode(code, ctrl, getMode) {
       const { applied, done } = changeQty(p, (mode === "in" ? 1 : -1) * stepOf(p));
       persist(done);
       flash(ctrl, p, applied, { out: mode === "out" });
-      setTimeout(() => ctrl.resume(), 700);
+      setTimeout(() => { if (!ctrl.hold) ctrl.resume(); }, 700);
       return;
     }
     showKnownProduct(p, ctrl);
@@ -756,7 +874,7 @@ function showKnownProduct(p, ctrl) {
     persist(done);
     flash(ctrl, p, applied, { out: sign < 0 });
     ctrl.forgetLast();
-    setTimeout(() => ctrl.resume(), 600);
+    setTimeout(() => { if (!ctrl.hold) ctrl.resume(); }, 600);
   };
   $("[data-in]", ctrl.panel).onclick = () => apply(1);
   $("[data-out]", ctrl.panel).onclick = () => apply(-1);
@@ -826,6 +944,7 @@ function renderCourses() {
         <strong>${low.length}</strong>
         <span>produit${low.length > 1 ? "s" : ""} sous le seuil d’alerte${low.some(p => p.sentAt) ? `, dont ${low.filter(p => p.sentAt).length} déjà sur la liste` : ""}</span>
       </div>
+      <p class="muted" style="margin-top:8px">De retour des courses ? Appuie sur <strong>Acheté</strong> : le produit passe en stock (avec ses dates limites) et quitte la liste.</p>
       <ul class="items items--shop" style="margin-top:12px">
         ${low.map(p => {
           const q = buyOf(p);
@@ -841,6 +960,11 @@ function renderCourses() {
               </span>
             </button>
             ${stepperHtml(`buy-${p.id}`, q, stepOf(p), { label: `Quantité à acheter de ${p.name}`, min: 0 })}
+            <div class="shop-buy">
+              <button type="button" class="btn ${p.sentAt ? "btn-label" : "btn-ghost"} btn-small" data-bought>
+                <i class="fa-solid fa-cart-arrow-down" aria-hidden="true"></i> Acheté
+              </button>
+            </div>
           </li>`;
         }).join("")}
       </ul>
@@ -870,6 +994,7 @@ function renderCourses() {
       const p = low.find(x => x.id === li.dataset.id);
       $("[data-open]", li).onclick = () => openProductSheet({ product: p });
       $("[data-check]", li).onchange = e => { checkState.set(p.id, e.target.checked); refreshLabel(); };
+      $("[data-bought]", li).onclick = () => openPurchaseSheet(p, buyOf(p), () => { buyQty.delete(p.id); checkState.delete(p.id); });
       bindStepper($("[data-stepper]", li), v => { buyQty.set(p.id, v); refreshLabel(); });
     });
     refreshLabel();
@@ -902,6 +1027,69 @@ function renderCourses() {
 
   update();
   return update;
+}
+
+/** « Acheté » : on valide la quantité (et les DLC), le produit passe en stock et quitte la liste. */
+function openPurchaseSheet(p, suggested, onDone) {
+  const step = stepOf(p);
+  const start = suggested > 0 ? suggested : (p.restockQty || step);
+  let dirty = false;
+  openSheet({
+    title: "Acheté",
+    body: `
+      <div class="scan-result">
+        ${thumbHtml(p)}
+        <span class="item-text">
+          <strong>${esc(p.listName || p.name)}</strong>
+          <small>En stock : ${esc(stockText(p))}${p.alert ? `, alerte à ${esc(qtyLabel(p.threshold, p.unit))}` : ""}</small>
+        </span>
+      </div>
+      <div class="qty-block" style="margin-top:14px">
+        <small>Quantité achetée</small>
+        ${stepperHtml("bought", start, step, { label: "Quantité achetée", lg: true, min: 0 })}
+        <small>${esc(unitOf(p.unit).label)}</small>
+      </div>
+      <fieldset class="field" style="margin-top:14px" data-lots-field>
+        <legend class="field-label">Dates limites (facultatif)</legend>
+        ${lotsEditorHtml("Ajouter une DLC")}
+        <span class="field-help">La cloche te prévient ${DLC_WARN_DAYS} jours avant chaque date.</span>
+      </fieldset>`,
+    footer: `<button type="button" class="btn btn-ghost" data-cancel>Annuler</button>
+             <button type="button" class="btn btn-primary" data-ok><i class="fa-solid fa-check"></i> Ajouter au stock</button>`,
+    isDirty: () => dirty,
+    onMount(el, entry) {
+      hydrateThumbs(el);
+      const amount = bindStepper($('[data-stepper="bought"]', el), () => { dirty = true; });
+      const lotsEd = bindLotsEditor($("[data-lots-field]", el), {
+        // Produit déjà suivi en DLC : une ligne prête pour la date des articles achetés.
+        lots: p.lots?.length ? [{ date: "", qty: start }] : [],
+        step,
+        defaultQty: () => Math.max(step, amount.read() - lotsTotal(lotsEd.read())),
+        onChange: () => { dirty = true; }
+      });
+      $("[data-cancel]", el).onclick = () => history.back();
+      $('[data-stepper="bought"] input', el).addEventListener("keydown", e => {
+        if (e.key === "Enter") { e.preventDefault(); validate(); }
+      });
+      $("[data-ok]", el).onclick = validate;
+
+      function validate() {
+        const amt = amount.read();
+        if (!(amt > 0)) { toast("Indique la quantité achetée.", { error: true }); return; }
+        const lots = lotsEd.read();
+        // Ligne laissée sans date : on l'ignore (les dates sont facultatives).
+        if (lotsTotal(lots) > amt) {
+          toast(`${fmtQty(lotsTotal(lots))} produits datés pour ${fmtQty(amt)} achetés : corrige les quantités.`, { error: true });
+          return;
+        }
+        persist(recordPurchase(p, amt, lots));
+        entry.close(() => {
+          toast(`${p.name} : +${qtyLabel(amt, p.unit)}, il y en a ${stockText(p)}`);
+          onDone?.();
+        });
+      }
+    }
+  });
 }
 
 function listmeBlock(link) {
@@ -1195,7 +1383,7 @@ function renderRangements() {
       const k = categoryOf(p.categoryId) ? p.categoryId : "";
       stats[k] = stats[k] || { n: 0, low: 0, empty: 0 };
       stats[k].n++;
-      if (isLow(p)) stats[k].low++;
+      if (needsRestock(p)) stats[k].low++;
       if (p.qty <= 0) stats[k].empty++;
     });
     const line = s => {
@@ -1567,6 +1755,7 @@ onAuthStateChanged(auth, async user => {
 /* ---------- Divers ---------- */
 
 $("#btn-scan").addEventListener("click", () => openMainScanner());
+initNotifications();
 $("#btn-account").addEventListener("click", () => {
   if (routeName() === "compte") location.hash = prevHash.startsWith("#/compte") ? "#/" : prevHash;
   else location.hash = "#/compte";

@@ -8,7 +8,8 @@ L’inventaire des placards, du frigo, du congélateur (et de tout ce qu’on ve
 - Une barre de recherche filtre en direct par nom, marque, nom de liste ou code-barres (sans tenir compte des accents ni des majuscules).
 - Les pastilles du haut filtrent un rangement, ou **À racheter** : les produits dont l’alerte de stock est déclenchée.
 - Chaque ligne a un compteur **− / +** pour corriger le stock d’un geste. Un appui sur le produit ouvre sa fiche.
-- Les produits sous leur seuil d’alerte portent l’étiquette **À racheter** (ou **Sur la liste** une fois envoyés vers ListMe).
+- Les produits sous leur seuil d’alerte portent l’étiquette **À racheter** (ou **Sur la liste** une fois envoyés vers ListMe, **Acheté** une fois rachetés).
+- Les produits dont une date limite tombe dans les 3 jours portent une étiquette rouge (**DLC dans 2 j**, **Périmé**…) ; sinon la prochaine DLC est rappelée sous le nom. La pastille **Bientôt périmés** les regroupe.
 
 ## Scanner
 
@@ -49,6 +50,25 @@ Le scanner utilise le détecteur intégré au navigateur quand il existe (Chrome
 - **Codes-barres** : ajouter (scan ou saisie) ou retirer. Si un code appartient déjà à un autre produit, l’appli propose de le déplacer.
 - **Supprimer** le produit (pour tout le foyer).
 
+## Dates limites (DLC)
+
+Chaque produit peut porter une **liste de dates limites**, chacune avec sa quantité (ex. 4 yaourts au 2 déc., 4 au 9 déc.).
+
+- **Fiche produit** › **Dates limites (DLC)** : ajouter, modifier ou retirer une date. Le total daté ne peut pas dépasser le stock.
+- **Acheté** (onglet Courses) : les DLC des articles achetés se saisissent au moment de valider la quantité.
+- **Scanner** : après un ajout au stock, le bouton **DLC** enregistre la date des unités qui viennent d’entrer.
+- Quand le stock baisse (−, scan de sortie, grand inventaire), les unités dont la date est la plus proche partent en premier.
+- **3 jours avant** une date (réglable avec `DLC_WARN_DAYS` dans `js/dlc.js`), une notification apparaît dans la cloche, et elle y reste tant que le lot n’est pas retiré.
+
+## Notifications (cloche)
+
+La cloche, en haut à droite à côté du profil, rassemble :
+
+- les **dates limites proches ou dépassées** (« Yaourt nature : bientôt périmé, Périme dans 2 jours ») : un appui ouvre la fiche, **Retirer** propose « Consommé ou jeté » (le lot sort du stock) ou « Enlever seulement la date » ;
+- les **produits à racheter** (« Racheter Lait ») : un appui ouvre les Courses.
+
+La pastille rouge compte les notifications pas encore vues sur cet appareil. Tout est calculé en direct à partir du placard : rien de plus n’est stocké côté serveur.
+
 ## Courses (vers ListMe)
 
 L’onglet **Courses** liste les produits dont l’alerte est activée et dont le stock est **inférieur ou égal au seuil**. La pastille sur l’onglet compte ceux qui ne sont pas encore partis sur la liste.
@@ -58,6 +78,7 @@ L’onglet **Courses** liste les produits dont l’alerte est activée et dont l
 - **Liste ListMe du foyer** : coller le lien du bouton « Partager » de ListMe relie une liste ; tous les envois du foyer la remplissent. Sans lien, chaque envoi crée une nouvelle liste « Fond de placard ».
 - Un produit envoyé est marqué **Envoyé le …** et n’est plus coché par défaut. Dès que son stock repasse au-dessus du seuil (retour des courses), la marque disparaît d’elle-même.
 - **Copier la liste** copie le texte (`- Lait : 6`) pour un autre usage.
+- **Acheté** : au retour des courses, un appui sur ce bouton demande la quantité réellement achetée (et, si besoin, les dates limites). Le produit est ajouté au stock et **quitte la liste**, même si le stock reste sous le seuil ; il y reviendra dès que ce stock aura de nouveau baissé.
 
 L’adresse de ListMe utilisée par défaut se règle dans `js/listme.js` (`LISTME_URL`).
 
@@ -168,6 +189,8 @@ js/store.js             données Firestore : foyer, produits, photos, rangements
 js/scanner.js           caméra et lecture des codes-barres (BarcodeDetector ou ZXing)
 js/lookup.js            recherche d’un code dans Open Food Facts et bases sœurs
 js/listme.js            envoi des courses vers ListMe
+js/dlc.js               dates limites : calculs, lots, alertes à 3 jours
+js/notifications.js     cloche de l’en-tête : DLC proches et produits à racheter
 js/catalog.js           rangements par défaut, unités, fruits et légumes courants
 js/products-ui.js       vignettes et libellés des produits
 js/ui.js                dialogues, panneaux, toasts, compression des photos
@@ -187,6 +210,7 @@ households/{hid}                   name, ownerUid, memberUids[], members{uid: {e
                                    lastInventoryAt, lastInventoryBy
 households/{hid}/products/{id}     name, brand, format, emoji, unit, categoryId, qty, barcodes[],
                                    alert, threshold, restockQty, listName, imageUrl, source,
-                                   hasPhoto, photoAt, sentAt, createdAt, updatedAt, updatedBy
+                                   hasPhoto, photoAt, sentAt, boughtLevel, lots[{id, date, qty}],
+                                   createdAt, updatedAt, updatedBy
 households/{hid}/images/{id}       data (photo compressée, data URL JPEG)
 ```

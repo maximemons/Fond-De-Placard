@@ -664,3 +664,54 @@ img { max-width: 100%; display: block; }
 .rows .reorder { display: flex; flex-direction: column; margin: -6px 0; }
 .rows .reorder .icon-btn { width: 36px; height: 26px; font-size: .8rem; border-radius: 8px; }
 .rows .reorder .icon-btn:disabled { opacity: .25; }
+
+/* ---------- Cloche (notifications) ---------- */
+
+.bell-btn { position: relative; color: var(--muted); }
+.bell-btn.has-notifs { color: var(--ink); }
+.bell-badge {
+  position: absolute; top: 4px; right: 2px;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+  display: grid; place-items: center;
+  background: var(--danger); color: #fff; font-size: .68rem; font-weight: 800; line-height: 1;
+  border: 2px solid var(--bg); box-sizing: content-box;
+}
+.rows-btn { border: 0; background: none; padding: 0; text-align: left; cursor: pointer; }
+.notif { border-left: 4px solid transparent; }
+.notif--soon { border-left-color: var(--label); }
+.notif--today, .notif--over { border-left-color: var(--danger); }
+.notif--over .rows-text strong { color: var(--danger); }
+.notif .btn-small { flex: none; }
+
+/* ---------- Dates limites (DLC) ---------- */
+
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
+.tags .tag { margin-top: 0; }
+.tag--dlc {
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface)); color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent); transform: none;
+}
+.tag--dlc.is-over { background: var(--danger); color: #fff; border-color: var(--danger); }
+.chips button.chip-dlc[aria-pressed="true"] { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+.lots { display: flex; flex-direction: column; gap: 8px; }
+.lots:empty { display: none; }
+.lot-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 8px;
+  padding: 8px 6px 8px 10px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line);
+}
+.lot-row.is-warn { border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+.lot-date input {
+  width: 100%; min-width: 0; height: 42px; padding: 0 10px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: var(--surface); outline: none;
+}
+.lot-date input:focus { border-color: var(--primary); }
+.lot-row .icon-btn { width: 36px; height: 36px; color: var(--muted); }
+.lot-hint { grid-column: 1 / -1; color: var(--muted); font-size: .8rem; font-weight: 600; }
+.lot-row.is-warn .lot-hint { color: var(--danger); }
+.lots-add { align-self: flex-start; }
+
+/* ---------- Courses : bouton « Acheté » ---------- */
+
+.items--shop .item { flex-wrap: wrap; }
+.shop-buy { flex-basis: 100%; display: flex; justify-content: flex-end; margin-top: -2px; }

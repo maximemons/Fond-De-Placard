@@ -1,6 +1,6 @@
 // Service worker : l'appli démarre sans réseau (cave, sous-sol, magasin mal couvert).
 // À chaque mise en ligne, incrémenter VERSION pour que les téléphones récupèrent la nouvelle version.
-const VERSION = "fdp-v3";
+const VERSION = "fdp-v4";
 
 const SHELL = [
   "./",
@@ -14,6 +14,8 @@ const SHELL = [
   "./js/listme.js",
   "./js/scanner.js",
   "./js/inventory.js",
+  "./js/dlc.js",
+  "./js/notifications.js",
   "./js/products-ui.js",
   "./js/firebase-config.js",
   "./js/vendor/zxing.min.js",

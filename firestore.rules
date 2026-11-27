@@ -79,7 +79,9 @@ service cloud.firestore {
           && request.resource.data.name is string
           && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 120
           && request.resource.data.qty is number
-          && request.resource.data.barcodes is list && request.resource.data.barcodes.size() <= 30;
+          && request.resource.data.barcodes is list && request.resource.data.barcodes.size() <= 30
+          && (!('lots' in request.resource.data)
+              || (request.resource.data.lots is list && request.resource.data.lots.size() <= 60));
       }
 
       match /images/{imageId} {

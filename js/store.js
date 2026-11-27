@@ -5,6 +5,7 @@
 import { auth, db } from "./firebase-config.js";
 import { DEFAULT_CATEGORIES } from "./catalog.js";
 import { newId, norm } from "./ui.js";
+import { lotsOf, trimLots, mergeLots, sameLots, isValidLot, expiringLots } from "./dlc.js";
 import {
   collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, query, where,
   writeBatch, serverTimestamp, increment, arrayUnion, arrayRemove, deleteField
@@ -123,6 +124,7 @@ export function watch(hid) {
       const p = { id: d.id, ...d.data() };
       p.qty = Math.max(0, Number(p.qty) || 0);
       p.barcodes = p.barcodes || [];
+      p.lots = lotsOf(p);
       return p;
     });
     state.ready.products = true;
@@ -157,8 +159,23 @@ export function isLow(p) {
   return !!p.alert && p.qty <= (Number(p.threshold) || 0);
 }
 
+/** Acheté depuis l'alerte, mais toujours sous le seuil : on ne le redemande pas
+ *  tant que le stock n'est pas redescendu sous le niveau atteint après l'achat. */
+export function isBoughtAwaiting(p) {
+  return p.boughtLevel !== null && p.boughtLevel !== undefined && p.qty >= Number(p.boughtLevel);
+}
+
+/** Sous le seuil et pas encore racheté : à mettre sur la liste de courses. */
+export function needsRestock(p) {
+  return isLow(p) && !isBoughtAwaiting(p);
+}
+
 export function lowProducts() {
-  return state.products.filter(isLow);
+  return state.products.filter(needsRestock);
+}
+
+export function expiringProducts() {
+  return state.products.filter(p => p.qty > 0 && expiringLots(p).length);
 }
 
 /* ---------- Produits ---------- */
@@ -168,12 +185,17 @@ const stamp = () => ({ updatedAt: serverTimestamp(), updatedBy: uid() });
 function cleanProduct(data) {
   const out = {};
   const keys = ["name", "brand", "emoji", "unit", "categoryId", "qty", "barcodes", "alert", "threshold",
-    "restockQty", "listName", "imageUrl", "source", "format"];
+    "restockQty", "listName", "imageUrl", "source", "format", "lots"];
   for (const k of keys) if (data[k] !== undefined) out[k] = data[k];
   if (out.name !== undefined) out.name = String(out.name).trim().slice(0, 120);
   if (out.qty !== undefined) out.qty = Math.max(0, Number(out.qty) || 0);
   if (out.threshold !== undefined) out.threshold = Math.max(0, Number(out.threshold) || 0);
   if (out.restockQty !== undefined) out.restockQty = Math.max(0, Number(out.restockQty) || 0);
+  if (out.lots !== undefined) {
+    out.lots = (out.lots || []).filter(isValidLot).slice(0, 60)
+      .map(l => ({ id: String(l.id || newId()), date: l.date, qty: Math.max(0, Number(l.qty) || 0) }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
   return out;
 }
 
@@ -182,11 +204,12 @@ export function createProduct(data, photo) {
   const batch = writeBatch(db);
   const payload = {
     qty: 0, barcodes: [], alert: false, threshold: 0, restockQty: 1, unit: "", emoji: "",
-    brand: "", listName: "", imageUrl: "", source: "", format: "",
+    brand: "", listName: "", imageUrl: "", source: "", format: "", lots: [],
     ...cleanProduct(data),
     hasPhoto: !!photo,
     photoAt: photo ? Date.now() : 0,
     sentAt: null,
+    boughtLevel: null,
     createdAt: serverTimestamp(),
     ...stamp()
   };
@@ -213,6 +236,7 @@ export function updateProduct(p, patch, photo) {
   const threshold = patch.threshold ?? p.threshold;
   const qty = patch.qty ?? p.qty;
   if (p.sentAt && qty > threshold) data.sentAt = null;
+  if (qty > threshold || (p.boughtLevel != null && qty < p.boughtLevel)) data.boughtLevel = null;
   batch.update(productRef(p.id), data);
   return batch.commit();
 }
@@ -230,11 +254,72 @@ export function changeQty(p, delta) {
   let d = delta < 0 ? -Math.min(-delta, cur) : delta;
   d = Math.round(d * 1000) / 1000;
   if (!d) return { applied: 0, done: Promise.resolve() };
-  const next = cur + d;
+  const next = Math.round((cur + d) * 1000) / 1000;
   const data = { qty: increment(d), ...stamp() };
   if (p.sentAt && next > (Number(p.threshold) || 0)) data.sentAt = null;
+  if (next > (Number(p.threshold) || 0) && p.boughtLevel != null) { data.boughtLevel = null; p.boughtLevel = null; }
+  // Sortie de stock : les unités datées les plus proches partent en premier.
+  if (d < 0 && p.lots?.length) {
+    const lots = trimLots(lotsOf(p), next);
+    if (!sameLots(lots, lotsOf(p))) { data.lots = lots; p.lots = lots; }
+  }
   p.qty = next; // reflet immédiat dans l'interface
   return { applied: d, done: updateDoc(productRef(p.id), data) };
+}
+
+/**
+ * Achat depuis la liste de courses : ajoute au stock, retire de la liste,
+ * enregistre les DLC éventuelles. newLots = [{ date, qty }]
+ */
+export function recordPurchase(p, amount, newLots = []) {
+  const add = Math.round(Math.max(0, Number(amount) || 0) * 1000) / 1000;
+  const cur = Math.max(0, Number(p.qty) || 0);
+  const next = Math.round((cur + add) * 1000) / 1000;
+  const threshold = Number(p.threshold) || 0;
+  const data = { sentAt: null, ...stamp() };
+  if (add) data.qty = increment(add);
+  // Toujours sous le seuil après l'achat : on le retire quand même de la liste.
+  data.boughtLevel = p.alert && next <= threshold ? next : null;
+  const added = newLots.filter(isValidLot);
+  if (added.length) {
+    const lots = trimLots(mergeLots(lotsOf(p), added, newId), next);
+    data.lots = lots;
+    p.lots = lots;
+  }
+  p.qty = next;
+  p.sentAt = null;
+  p.boughtLevel = data.boughtLevel;
+  return updateDoc(productRef(p.id), data);
+}
+
+/** Ajoute des lots datés à un stock déjà compté (ex. après un scan d'entrée). */
+export function addLots(p, newLots) {
+  const lots = trimLots(mergeLots(lotsOf(p), newLots, newId), p.qty);
+  p.lots = lots;
+  return updateDoc(productRef(p.id), { lots, ...stamp() });
+}
+
+/** Lot consommé ou jeté : il sort du stock et de la liste des DLC. */
+export function consumeLot(p, lotId) {
+  const lot = lotsOf(p).find(l => l.id === lotId);
+  if (!lot) return Promise.resolve();
+  const cur = Math.max(0, Number(p.qty) || 0);
+  const d = Math.min(lot.qty, cur);
+  const next = Math.round((cur - d) * 1000) / 1000;
+  const lots = trimLots(lotsOf(p).filter(l => l.id !== lotId), next);
+  const data = { lots, ...stamp() };
+  if (d) data.qty = increment(-d);
+  if (p.boughtLevel != null && next < p.boughtLevel) data.boughtLevel = null;
+  p.qty = next;
+  p.lots = lots;
+  return updateDoc(productRef(p.id), data);
+}
+
+/** Lot dont la date est fausse ou déjà retiré à la main : on enlève juste la date. */
+export function dropLot(p, lotId) {
+  const lots = lotsOf(p).filter(l => l.id !== lotId);
+  p.lots = lots;
+  return updateDoc(productRef(p.id), { lots, ...stamp() });
 }
 
 export function addBarcode(p, code) {
@@ -266,6 +351,11 @@ export async function applyInventory(entries) {
     chunk.forEach(({ product, qty }) => {
       const data = { qty: Math.max(0, qty), ...stamp() };
       if (product.sentAt && qty > (Number(product.threshold) || 0)) data.sentAt = null;
+      if (product.boughtLevel != null && (qty > (Number(product.threshold) || 0) || qty < product.boughtLevel)) data.boughtLevel = null;
+      if (product.lots?.length) {
+        const lots = trimLots(lotsOf(product), qty);
+        if (!sameLots(lots, lotsOf(product))) data.lots = lots;
+      }
       batch.update(productRef(product.id), data);
     });
     return batch.commit();
@@ -403,7 +493,7 @@ export async function joinHousehold(target, { copy = false } = {}) {
         const { id, ...rest } = p;
         const nid = doc(productsCol(target.id)).id;
         batch.set(productRef(nid, target.id), {
-          ...rest, categoryId: map[p.categoryId] || "", sentAt: null,
+          ...rest, categoryId: map[p.categoryId] || "", sentAt: null, boughtLevel: null,
           createdAt: serverTimestamp(), ...stamp()
         });
         if (p.hasPhoto) {
