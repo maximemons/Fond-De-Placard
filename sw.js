@@ -1,6 +1,6 @@
 // Service worker : l'appli démarre sans réseau (cave, sous-sol, magasin mal couvert).
 // À chaque mise en ligne, incrémenter VERSION pour que les téléphones récupèrent la nouvelle version.
-const VERSION = "fdp-v5";
+const VERSION = "fdp-v7";
 
 const SHELL = [
   "./",

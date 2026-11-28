@@ -481,7 +481,8 @@ function openProductSheet({ product = null, prefill = {}, onSaved = null } = {})
             <input name="name" type="text" maxlength="120" required value="${esc(base.name)}" placeholder="Ex. Coquillettes">
           </label>
         </div>
-        <input type="file" accept="image/*" data-file hidden>
+        <input type="file" accept="image/*" capture="environment" data-file-camera hidden>
+        <input type="file" accept="image/*" data-file-gallery hidden>
       </div>
 
       <div class="row" style="margin-top:14px">
@@ -592,22 +593,23 @@ function openProductSheet({ product = null, prefill = {}, onSaved = null } = {})
       });
 
       const redrawHero = () => { $("[data-hero]", el).innerHTML = heroThumb(); hydrateThumbs(el); };
-      const fileInput = $("[data-file]", el);
+      const cameraInput = $("[data-file-camera]", el);
+      const galleryInput = $("[data-file-gallery]", el);
       $("[data-photo-btn]", el).onclick = async () => {
         const hasAny = typeof photo === "string" || (photo !== null && product?.hasPhoto) || imageUrl;
-        if (hasAny) {
-          const c = await choiceDialog("Photo du produit", [
-            { label: "Prendre ou choisir une photo", value: "new", kind: "primary" },
-            { label: "Retirer la photo", value: "remove", kind: "danger" }
-          ]);
-          if (c === "remove") { photo = null; imageUrl = ""; dirty = true; redrawHero(); }
-          if (c !== "new") return;
-        }
-        fileInput.click();
+        const choices = [
+          { label: "Prendre une photo", value: "camera", kind: "primary" },
+          { label: "Choisir dans la galerie", value: "gallery" }
+        ];
+        if (hasAny) choices.push({ label: "Retirer la photo", value: "remove", kind: "danger" });
+        const c = await choiceDialog("Photo du produit", choices);
+        if (c === "remove") { photo = null; imageUrl = ""; dirty = true; redrawHero(); return; }
+        if (c === "camera") cameraInput.click();
+        else if (c === "gallery") galleryInput.click();
       };
-      fileInput.onchange = async () => {
-        const f = fileInput.files?.[0];
-        fileInput.value = "";
+      const onFile = input => async () => {
+        const f = input.files?.[0];
+        input.value = "";
         if (!f) return;
         try {
           photo = await compressImage(f);
@@ -617,6 +619,8 @@ function openProductSheet({ product = null, prefill = {}, onSaved = null } = {})
           toast("Cette image n’a pas pu être lue.", { error: true });
         }
       };
+      cameraInput.onchange = onFile(cameraInput);
+      galleryInput.onchange = onFile(galleryInput);
 
       const drawCodes = () => {
         $("[data-codes]", el).innerHTML = codes.length

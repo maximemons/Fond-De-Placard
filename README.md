@@ -40,7 +40,7 @@ Le scanner utilise le détecteur intégré au navigateur quand il existe (Chrome
 ## Fiche produit
 
 - **Nom**, **marque**, **format** (ex. `500 g`) et **rangement** (ou « Nouveau rangement… » directement depuis la liste).
-- **Photo** : un appui sur la vignette permet de prendre ou choisir une photo (compressée sur le téléphone avant l’envoi), ou de retirer la photo. Sans photo personnelle, la photo d’Open Food Facts est utilisée, sinon l’émoji.
+- **Photo** : un appui sur la vignette propose de **prendre une photo** avec l’appareil photo ou de **la choisir dans la galerie** (compressée sur le téléphone avant l’envoi), ou de retirer la photo. Sans photo personnelle, la photo d’Open Food Facts est utilisée, sinon l’émoji.
 - **Compté en** : pièce, kilo, gramme, litre, centilitre, botte, paquet, boîte, bouteille, pot, sachet, rouleau. Le pas du compteur suit l’unité (± 1 pièce, ± 0,25 kg, ± 100 g, ± 0,5 l…). Une quantité précise peut aussi être tapée.
 - **Émoji** : remplace l’icône du rangement dans la liste.
 - **Alerte de stock** :

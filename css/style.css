@@ -274,7 +274,7 @@ img { max-width: 100%; display: block; }
   background: var(--surface-2); display: grid; place-items: center; font-size: 1.4rem;
   border: 1px solid var(--line);
 }
-.thumb img { width: 100%; height: 100%; object-fit: cover; background: #fff; }
+.thumb img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; background: #fff; }
 .thumb--lg { width: 96px; height: 96px; border-radius: 18px; font-size: 2.4rem; }
 .item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .item-text strong { font-weight: 700; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
