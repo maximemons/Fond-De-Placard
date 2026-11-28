@@ -69,6 +69,16 @@ La cloche, en haut à droite à côté du profil, rassemble :
 
 La pastille rouge compte les notifications pas encore vues sur cet appareil. Tout est calculé en direct à partir du placard : rien de plus n’est stocké côté serveur.
 
+### Notifications du téléphone
+
+En haut du panneau de la cloche, l’interrupteur **Notifications du téléphone** demande l’autorisation du navigateur. Une fois activé (réglage propre à chaque appareil), chaque nouvelle alerte de la cloche déclenche aussi une notification système :
+
+- une notification par alerte, ou une seule notification récapitulative si plus de 3 arrivent en même temps ;
+- une alerte déjà vue dans la cloche n’est pas envoyée, et une alerte n’est envoyée qu’une fois (elle le sera à nouveau si elle disparaît puis revient, ex. une DLC qui passe de « bientôt » à « périmé ») ;
+- un appui sur la notification ouvre l’appli : la cloche pour une date limite, les Courses pour un produit à racheter.
+
+Les alertes étant calculées sur l’appareil, les notifications partent quand l’appli est ouverte, même en arrière-plan (onglet ou appli installée non fermée) ; il n’y a pas de serveur d’envoi. Sur iPhone, il faut iOS 16.4 ou plus et l’appli ajoutée à l’écran d’accueil.
+
 ## Courses (vers ListMe)
 
 L’onglet **Courses** liste les produits dont l’alerte est activée et dont le stock est **inférieur ou égal au seuil**. La pastille sur l’onglet compte ceux qui ne sont pas encore partis sur la liste.

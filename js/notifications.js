@@ -1,6 +1,8 @@
 // Cloche de l'en-tête : produits à racheter et dates limites proches.
 // Les notifications sont calculées en direct à partir du placard (rien n'est stocké côté serveur) ;
 // seules les notifications déjà vues sont mémorisées sur l'appareil, pour la pastille.
+// Chaque nouvelle notification de la cloche déclenche aussi une notification du navigateur
+// (si l'utilisateur l'a activée sur cet appareil depuis le panneau de la cloche).
 
 import { $, $$, esc, fmtDate, openSheet, persist, toast, choiceDialog } from "./ui.js";
 import { state, lowProducts, consumeLot, dropLot } from "./store.js";
@@ -17,6 +19,175 @@ function loadSeen() {
 function saveSeen(set) {
   try { localStorage.setItem(seenKey(), JSON.stringify([...set])); } catch { /* stockage plein */ }
 }
+
+/* ---------- Notifications du navigateur ---------- */
+
+const PREF_KEY = "fdp:browser-notifs";            // "on" | "off", par appareil
+const pushedKey = () => `fdp:notifs-pushed:${state.hid}`;
+const MAX_SEPARATE = 3;                           // au-delà, une seule notification récapitulative
+
+export function browserNotifsSupported() {
+  return "Notification" in window && window.isSecureContext;
+}
+function browserPref() {
+  try { return localStorage.getItem(PREF_KEY); } catch { return null; }
+}
+function setBrowserPref(v) {
+  try { localStorage.setItem(PREF_KEY, v); } catch { /* stockage plein */ }
+}
+export function browserNotifsOn() {
+  return browserNotifsSupported() && Notification.permission === "granted" && browserPref() === "on";
+}
+function loadPushed() {
+  try { return new Set(JSON.parse(localStorage.getItem(pushedKey()) || "[]")); } catch { return new Set(); }
+}
+function savePushed(set) {
+  try { localStorage.setItem(pushedKey(), JSON.stringify([...set])); } catch { /* stockage plein */ }
+}
+
+function notifContent(n) {
+  const { p } = n;
+  if (n.kind === "dlc") {
+    return {
+      title: `${p.name} : ${n.stage === "over" ? "périmé" : "bientôt périmé"}`,
+      body: `${dlcText(n.lot.date)} · ${qtyLabel(n.lot.qty, p.unit)} · DLC ${fmtDlc(n.lot.date)}`,
+      target: "notifs"
+    };
+  }
+  return {
+    title: `Racheter ${p.listName || p.name}`,
+    body: p.sentAt ? "Déjà sur la liste de courses" : `Reste ${stockText(p)}`,
+    target: "courses"
+  };
+}
+
+async function showBrowserNotif(title, { body, tag, target }) {
+  const options = {
+    body,
+    tag,
+    icon: "./icons/icon-192.png",
+    badge: "./icons/icon-192.png",
+    lang: "fr",
+    data: { target }
+  };
+  try {
+    // Sur Android, seul le service worker peut afficher une notification.
+    if ("serviceWorker" in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) { await reg.showNotification(title, options); return; }
+    }
+    const notif = new Notification(title, options);
+    notif.onclick = () => { window.focus(); handleNotifTarget(target); notif.close(); };
+  } catch { /* navigateur qui refuse : la cloche reste la référence */ }
+}
+
+/** Envoie au navigateur les notifications apparues depuis le dernier passage. */
+function pushBrowserNotifs(list, seen) {
+  const active = new Set(list.map(n => n.key));
+  const pushed = loadPushed();
+  let changed = false;
+  // Une notification disparue puis revenue sera signalée à nouveau.
+  for (const k of pushed) if (!active.has(k)) { pushed.delete(k); changed = true; }
+
+  const fresh = list.filter(n => !pushed.has(n.key));
+  for (const n of fresh) pushed.add(n.key);
+  if (fresh.length) changed = true;
+  if (changed) savePushed(pushed);
+
+  if (!browserNotifsOn()) return;
+  // Déjà vues dans la cloche (panneau ouvert) : inutile de les rappeler.
+  const toShow = fresh.filter(n => !seen.has(n.key));
+  if (!toShow.length) return;
+
+  if (toShow.length > MAX_SEPARATE) {
+    const dlc = toShow.filter(n => n.kind === "dlc").length;
+    const restock = toShow.length - dlc;
+    const parts = [];
+    if (dlc) parts.push(`${dlc} date${dlc > 1 ? "s" : ""} limite${dlc > 1 ? "s" : ""}`);
+    if (restock) parts.push(`${restock} produit${restock > 1 ? "s" : ""} à racheter`);
+    showBrowserNotif(`${toShow.length} nouvelles notifications`, {
+      body: parts.join(" · "),
+      tag: "fdp-summary",
+      target: "notifs"
+    });
+    return;
+  }
+  for (const n of toShow) {
+    const { title, body, target } = notifContent(n);
+    showBrowserNotif(title, { body, tag: `fdp:${n.key}`, target });
+  }
+}
+
+/** Active les notifications du navigateur (à appeler depuis un geste de l'utilisateur). */
+async function enableBrowserNotifs() {
+  if (!browserNotifsSupported()) return false;
+  let perm = Notification.permission;
+  if (perm === "default") {
+    try { perm = await Notification.requestPermission(); } catch { perm = "denied"; }
+  }
+  if (perm !== "granted") {
+    toast("Notifications refusées par le navigateur", { error: true });
+    return false;
+  }
+  setBrowserPref("on");
+  // Ce qui est déjà dans la cloche est connu : seules les prochaines seront envoyées.
+  if (state.hid) savePushed(new Set(computeNotifications().map(n => n.key)));
+  toast("Notifications activées sur cet appareil");
+  return true;
+}
+
+let pendingTarget = null;
+
+function handleNotifTarget(target) {
+  if (target === "courses") { location.hash = "#/courses"; return; }
+  pendingTarget = "notifs";
+  tryOpenPending();
+}
+
+function tryOpenPending() {
+  if (!pendingTarget || panelDraw) { if (panelDraw) pendingTarget = null; return; }
+  if (!state.hid || !state.ready.household || !state.ready.products) return;
+  pendingTarget = null;
+  openNotifications();
+}
+
+function browserRowHtml() {
+  if (!browserNotifsSupported()) {
+    return `
+      <div class="switch-row">
+        <span><strong>Notifications du téléphone</strong>
+        <small>Pas disponibles dans ce navigateur. Sur iPhone, ajoute d’abord l’appli à l’écran d’accueil.</small></span>
+      </div>`;
+  }
+  const denied = Notification.permission === "denied";
+  const on = browserNotifsOn();
+  return `
+    <div class="switch-row">
+      <span><strong>Notifications du téléphone</strong>
+      <small>${denied
+        ? "Bloquées : autorise-les dans les réglages du navigateur pour ce site."
+        : "Être prévenu ici dès qu’une nouvelle alerte arrive dans la cloche."}</small></span>
+      <label class="switch"><input type="checkbox" data-push-toggle ${on ? "checked" : ""} ${denied ? "disabled" : ""} aria-label="Notifications du téléphone"><span></span></label>
+    </div>`;
+}
+
+function mountBrowserRow(host) {
+  host.innerHTML = browserRowHtml();
+  const input = $("[data-push-toggle]", host);
+  if (!input) return;
+  input.onchange = async () => {
+    if (input.checked) {
+      input.disabled = true;
+      await enableBrowserNotifs();
+      mountBrowserRow(host); // reflète l'état réel (autorisation accordée ou non)
+    } else {
+      setBrowserPref("off");
+      toast("Notifications désactivées sur cet appareil");
+    }
+  };
+}
+
+/* ---------- Cloche ---------- */
 
 /** Liste des notifications actives, les plus urgentes d'abord. */
 export function computeNotifications() {
@@ -56,6 +227,7 @@ export function refreshNotifications() {
   // Panneau ouvert : tout ce qui s'affiche est vu.
   if (panelDraw) for (const k of active) if (!seen.has(k)) { seen.add(k); changed = true; }
   if (changed) saveSeen(seen);
+  pushBrowserNotifs(list, seen);
 
   const unseen = list.filter(n => !seen.has(n.key)).length;
   badge.textContent = unseen > 9 ? "9+" : String(unseen);
@@ -65,6 +237,7 @@ export function refreshNotifications() {
     ? `Notifications : ${list.length}${unseen ? `, dont ${unseen} nouvelle${unseen > 1 ? "s" : ""}` : ""}`
     : "Notifications");
   panelDraw?.(list);
+  tryOpenPending();
 }
 
 function dlcRow(n) {
@@ -96,10 +269,11 @@ function restockRow(n) {
 export function openNotifications() {
   openSheet({
     title: "Notifications",
-    body: `<div data-notifs></div>`,
+    body: `<div data-push-row style="margin-bottom:18px"></div><div data-notifs></div>`,
     onClose() { panelDraw = null; },
     onMount(el, entry) {
       const box = $("[data-notifs]", el);
+      mountBrowserRow($("[data-push-row]", el));
       panelDraw = list => {
         const dlc = list.filter(n => n.kind === "dlc");
         const restock = list.filter(n => n.kind === "restock");
@@ -164,4 +338,14 @@ export function initNotifications() {
   // Les dates avancent toutes seules : on recalcule au retour sur l'appli et régulièrement.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshNotifications(); });
   setInterval(refreshNotifications, 15 * 60 * 1000);
+
+  // Appui sur une notification du navigateur (relayé par le service worker).
+  navigator.serviceWorker?.addEventListener("message", e => {
+    if (e.data?.type === "fdp-notif-click") handleNotifTarget(e.data.target);
+  });
+  // Appli ouverte depuis une notification alors qu'elle était fermée.
+  if (location.hash === "#/notifs") {
+    history.replaceState(null, "", "#/");
+    pendingTarget = "notifs";
+  }
 }

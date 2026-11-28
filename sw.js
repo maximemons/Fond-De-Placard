@@ -1,6 +1,6 @@
 // Service worker : l'appli démarre sans réseau (cave, sous-sol, magasin mal couvert).
 // À chaque mise en ligne, incrémenter VERSION pour que les téléphones récupèrent la nouvelle version.
-const VERSION = "fdp-v4";
+const VERSION = "fdp-v5";
 
 const SHELL = [
   "./",
@@ -78,4 +78,21 @@ self.addEventListener("fetch", event => {
     );
   }
   // Le reste (Firestore, authentification, Open Food Facts) passe directement par le réseau.
+});
+
+// Appui sur une notification : on ramène l'appli au premier plan (ou on l'ouvre) sur la bonne vue.
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const target = event.notification.data?.target || "notifs";
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const client = all.find(c => c.url.startsWith(self.registration.scope));
+    if (client) {
+      await client.focus().catch(() => {});
+      client.postMessage({ type: "fdp-notif-click", target });
+      return;
+    }
+    const hash = target === "courses" ? "#/courses" : "#/notifs";
+    await self.clients.openWindow(new URL("./" + hash, self.registration.scope).href);
+  })());
 });
